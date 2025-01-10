@@ -1,0 +1,79 @@
+trigger:
+- master
+
+resources:
+- repo: self
+
+variables:
+  # Container registry service connection established during pipeline creation
+  dockerRegistryServiceConnection: 'b32e113a-f724-4e2f-85b1-b299200e624f'
+  imageRepository: 'king'
+  containerRegistry: 'kings.azurecr.io'
+  dockerfilePath: '$(Build.SourcesDirectory)/Dockerfile'
+  tag: '$(Build.BuildId)'
+
+  # Agent VM image name
+  vmImageName: 'ubuntu-latest'
+
+stages:
+- stage: Build
+  displayName: Build and push stage
+  jobs:
+  - job: Build
+    displayName: Build
+    pool:
+      vmImage: $(vmImageName)
+    steps:
+    - task: Docker@2
+      displayName: Build and push an image to container registry
+      inputs:
+        command: buildAndPush
+        repository: $(imageRepository)
+        dockerfile: $(dockerfilePath)
+        containerRegistry: $(dockerRegistryServiceConnection)
+        tags: |
+          $(tag)
+
+- stage: Update
+  displayName: Update
+  dependsOn: Build
+  jobs:
+  - job: Update
+    displayName: Update Kubernetes Manifests
+    pool:
+      vmImage: $(vmImageName)
+    steps:
+    - task: ShellScript@2
+      displayName: Update Kubernetes Manifests
+      inputs:
+        scriptPath: './updateK8sManifests.sh'
+        args: 'king $(imageRepository) $(tag)'
+  - job: permission
+    pool: server
+    displayName: permission for granting
+    steps:
+    - task: ManualValidation@1
+      inputs:
+       notifyUsers: 'anirudh89368@gmail.com'
+       instructions: 'continue'
+
+  
+
+
+- stage: Deploy
+  displayName: Deploy to Kubernetes
+  dependsOn: Update
+  jobs:
+  - job: Deploy
+    displayName: Deploy Kubernetes Manifests
+    pool:
+      vmImage: $(vmImageName)
+    steps:
+    - task: KubernetesManifest@1
+      displayName: Deploy to Kubernetes Cluster
+      inputs:
+        action: 'deploy'
+        connectionType: 'kubernetesServiceConnection'
+        kubernetesServiceConnection: 'kubernets-new-connection'
+        namespace: 'default'
+        manifests: 'king-deployment.yaml'
